@@ -61,6 +61,12 @@ object Deploy {
 
   val gitRepoPresent = TaskKey[Unit]("gitRepoPresent", "Succeeds if a git repository is present in the cwd")
 
+  val deployProcessArgsInput = inputKey[Args]("Process the arguments")
+
+  val deployCheckout = TaskKey[Args]("deployCheckout", "Checkout the specified git version.")
+
+  val deployBuild = TaskKey[Args]("deployBuild", "Build the projects.")
+
   val gitRepoCleanTask = gitRepoClean := {
     // Dependencies
     gitRepoPresent.value
@@ -90,56 +96,72 @@ object Deploy {
     println("Git repository present.")
   }
 
+  case class Args(deployTarget: String, targetConfig: Config, configMap: Map[String, String])
+  val deployProcessArgsInputTask = deployProcessArgsInput := {
+    // Dependencies
+    gitRepoClean.value
+
+    val args: Seq[String] = Def.spaceDelimited("<arg>").parsed
+    // Process any definition-like args.
+    val (commandlineOverrides, reducedArgs) = parseDefines(args)
+
+    if (reducedArgs.length != 2) {
+      throw new IllegalArgumentException(Usage)
+    }
+    val configFile = new File(reducedArgs(0))
+    if (!configFile.isFile()) {
+      throw new IllegalArgumentException(s"${configFile.getPath()}: Must be a config file")
+    }
+    val deployTarget = reducedArgs(1)
+
+    val targetConfig = loadTargetConfig(commandlineOverrides, configFile, deployTarget)
+
+    val configMap = validateAsMap(deployTarget, targetConfig)
+
+    Args(deployTarget, targetConfig, configMap)
+  }
+
+  val deployProcessArgs = deployProcessArgsInput.toTask("Process arguments.")
+
+  val deployCheckoutTask = deployBuild <<= deployProcessArgs map { args =>
+    // Check out the provided version, if it's set.
+    for (version <- args.configMap.get("project.version")) {
+      println(s"Checking out ${version} . . .")
+      if (Process(Seq("git", "checkout", "-q", version)).! != 0) {
+        throw new IllegalArgumentException(s"Could not checkout ${version}.")
+      }
+    }
+
+    args
+  }
+
+  val deployBuildTask = deployBuild <<= deployCheckout map { args =>
+    (compile in Compile).value
+
+    args
+  }
+
   val settings = packageArchetype.java_application ++ Seq(gitRepoCleanTask, gitRepoPresentTask,
     deploy := {
-      // Dependencies
-      gitRepoClean.value
-
-      val args: Seq[String] = Def.spaceDelimited("<arg>").parsed
-      // Process any definition-like args.
-      val (commandlineOverrides, reducedArgs) = parseDefines(args)
-
-      if (reducedArgs.length != 2) {
-        throw new IllegalArgumentException(Usage)
-      }
-      val configFile = new File(reducedArgs(0))
-      if (!configFile.isFile()) {
-        throw new IllegalArgumentException(s"${configFile.getPath()}: Must be a config file")
-      }
-      val deployTarget = reducedArgs(1)
-
-      val targetConfig = loadTargetConfig(commandlineOverrides, configFile, deployTarget)
-
-      val configMap = validateAsMap(deployTarget, targetConfig)
-
-      // TODO(jkinkead): Allow for a no-op / dry-run flag that only prints the
-      // commands.
-
-      // Check out the provided version, if it's set.
-      for (version <- configMap.get("project.version")) {
-        println(s"Checking out ${version} . . .")
-        if (Process(Seq("git", "checkout", "-q", version)).! != 0) {
-          throw new IllegalArgumentException(s"Could not checkout ${version}.")
-        }
-      }
+      val args = deployBuild.value
 
       // Build the target specified.
-      val projectName = configMap("project.name")
+      val projectName = args.configMap("project.name")
       println(s"Building ${projectName} . . .")
       if (Process(Seq("sbt", "project " + projectName, "clean", "stage")).! != 0) {
         println(s"Error building ${projectName}, exiting.")
       }
 
-      val universalStagingDir = configMap.get("project.subdirectory") match {
+      val universalStagingDir = args.configMap.get("project.subdirectory") match {
         case Some(subdir) => new File(subdir, UniversalStagingSubdir)
         case None         => new File(UniversalStagingSubdir)
       }
 
       // Copy over the per-env config file, if it exists.
-      val deployEnv = if (deployTarget.lastIndexOf('.') >= 0) {
-        deployTarget.substring(deployTarget.lastIndexOf('.') + 1)
+      val deployEnv = if (args.deployTarget.lastIndexOf('.') >= 0) {
+        args.deployTarget.substring(args.deployTarget.lastIndexOf('.') + 1)
       } else {
-        deployTarget
+        args.deployTarget
       }
       val envConfFile = new File(universalStagingDir, s"conf/${deployEnv}.conf")
       if (envConfFile.exists) {
@@ -161,12 +183,12 @@ object Deploy {
       // Command to pass to rsync's "rsh" flag, and to use as the base of our ssh
       // operations.
       val sshCommand = {
-        val sshKeyfile = configMap("deploy.user.ssh_keyfile")
-        val sshUser = configMap("deploy.user.ssh_username")
+        val sshKeyfile = args.configMap("deploy.user.ssh_keyfile")
+        val sshUser = args.configMap("deploy.user.ssh_username")
         Seq("ssh", "-i", sshKeyfile, "-l", sshUser)
       }
-      val deployHost = configMap("deploy.host")
-      val deployDirectory = configMap("deploy.directory")
+      val deployHost = args.configMap("deploy.host")
+      val deployDirectory = args.configMap("deploy.directory")
 
       val rsyncCommand = Seq("rsync", "-vcrtzP", "--rsh=" + sshCommand.mkString(" "), "--include=/bin",
         "--include=/conf", "--include=/lib", "--include=/public", "--exclude=/*", "--delete",
@@ -180,7 +202,7 @@ object Deploy {
       }
 
       // Now, ssh to the remote host and run the restart script.
-      val restartScript = deployDirectory + "/" + configMap("deploy.startup_script")
+      val restartScript = deployDirectory + "/" + args.configMap("deploy.startup_script")
       val restartCommand = sshCommand ++ Seq(deployHost, restartScript, "restart")
       println("Running " + restartCommand.mkString(" ") + " . . .")
       if (Process(restartCommand).! != 0) {
