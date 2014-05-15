@@ -15,11 +15,11 @@ object Format {
     defaultScalariformSettings ++
       // formatting for config settings
       inConfig(Compile)(configSettings) ++
-      inConfig(Test)(configSettings) ++
       Seq(
         // check formatting on compile
         compileInputs in (Compile, compile) <<= (compileInputs in (Compile, compile)) dependsOn (FormatKeys.formatCheck in Compile),
-        compileInputs in (Test, compile) <<= (compileInputs in (Test, compile)) dependsOn (FormatKeys.formatCheck in Test),
+        // also run on test sources when running format / formatCheck
+        sourceDirectories in (Compile, ScalariformKeys.format) := (scalaSource in Test).value,
         // scalariform settings
         ScalariformKeys.preferences := formattingPreferences)
 
