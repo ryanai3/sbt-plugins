@@ -17,7 +17,7 @@ object VersionInjectorPlugin extends AutoPlugin {
     val injectGit = TaskKey[File]("injectGit", "Generate the git.conf resource")
     val gitCommitDate = TaskKey[Long]("gitCommitDate", "The date in milliseconds of the current git commit")
     val gitRemotes = TaskKey[Seq[String]]("gitRemotes", "A list of the remotes of this git repository")
-    val gitSha1 = TaskKey[String]("gitSha1", "The sha1 hash of the current git commit!!!")
+    val gitSha1 = TaskKey[String]("gitSha1", "The sha1 hash of the current git commit")
     val gitDescribe = TaskKey[String]("gitDescribe", "The description of the current git commit")
   }
 
@@ -55,8 +55,7 @@ object VersionInjectorPlugin extends AutoPlugin {
   val gitRemotesTask = gitRemotes := {
     val remotes = gitCommand("remote").lines.toList
     for (remote <- remotes) yield {
-      val url = (gitCommand("config", "--get", s"remote.${remote}.url").!!).trim
-      url
+      (gitCommand("config", "--get", s"remote.${remote}.url").!!).trim
     }
   }
 
@@ -84,8 +83,8 @@ object VersionInjectorPlugin extends AutoPlugin {
 
       def quote(s: String) = "\"" + s + "\""
       val gitContents =
-        "sha1: " + quote(sha1) + "\n" +
-        "remotes: " + (remotes map quote).mkString("[", ", ", "]") + "\n" +
+          "sha1: " + quote(sha1) + "\n" +
+          "remotes: " + (remotes map quote).mkString("[", ", ", "]") + "\n" +
           "date: " + quote(date.toString)
       IO.write(gitConfFile, gitContents)
       gitConfFile
