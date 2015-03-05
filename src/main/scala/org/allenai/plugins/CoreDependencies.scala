@@ -17,6 +17,8 @@ trait CoreDependencies {
     val slf4jApi = "org.slf4j" % "slf4j-api" % slf4jVersion
     val logbackCore = "ch.qos.logback" % "logback-core" % logbackVersion
     val logbackClassic = "ch.qos.logback" % "logback-classic" % logbackVersion
+
+    val dependencies = List(slf4jApi, logbackCore, logbackClassic)
   }
 
   // slf4j implementation (logback), and the log4j -> slf4j bridge.
